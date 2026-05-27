@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:5000
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+      target: development
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=feedbackhq
+      - DB_USER=feedbackhq_user
+      - DB_PASSWORD=localdevpassword
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=local-dev-jwt-secret-change-in-prod
+      - CORS_ORIGIN=http://localhost:3000
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Retry loop — waits until MySQL is truly ready before starting Node
+    command: >
+      sh -c "
+        echo 'Waiting for MySQL...' &&
+        until node -e \"require('mysql2').createConnection({host:'mysql',user:'feedbackhq_user',password:'localdevpassword',database:'feedbackhq'}).connect(err => { if(err) process.exit(1); process.exit(0); })\" 2>/dev/null; do
+          sleep 2
+        done &&
+        echo 'MySQL ready!' &&
+        npm run dev
+      "
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=feedbackhq
+      - MYSQL_USER=feedbackhq_user
+      - MYSQL_PASSWORD=localdevpassword
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "feedbackhq_user", "-plocaldevpassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  mysql_data:
+  redis_data:

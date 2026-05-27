@@ -1,0 +1,249 @@
+name: CI/CD — Zero Downtime Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION:            us-east-1
+  ECR_FRONTEND:          feedbackhq-frontend
+  ECR_BACKEND:           feedbackhq-backend
+  ECS_CLUSTER:           feedbackhq-prod
+  ECS_SERVICE_FRONTEND:  feedbackhq-frontend
+  ECS_SERVICE_BACKEND:   feedbackhq-backend
+  TASK_DEF_FRONTEND:     feedbackhq-frontend
+  TASK_DEF_BACKEND:      feedbackhq-backend
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # JOB 1 — Run tests
+  # (Like running your test suite before merging
+  #  a PR in Azure DevOps)
+  # ─────────────────────────────────────────────
+  test:
+    name: 🧪 Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: cd backend && npm ci
+
+      - name: Run tests
+        run: cd backend && npm test
+        env:
+          NODE_ENV: test
+          JWT_SECRET: test-secret
+
+      - name: Lint
+        run: cd backend && npm run lint || true
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — Build Docker images and push to ECR
+  # (ECR = ACR in Azure)
+  # ─────────────────────────────────────────────
+  build-and-push:
+    name: 🐳 Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      frontend-image: ${{ steps.frontend-build.outputs.image }}
+      backend-image:  ${{ steps.backend-build.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push frontend
+        id: frontend-build
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --target production \
+            --build-arg VITE_API_URL=${{ secrets.VITE_API_URL }} \
+            -t $REGISTRY/$ECR_FRONTEND:$IMAGE_TAG \
+            -t $REGISTRY/$ECR_FRONTEND:latest \
+            ./frontend
+          docker push $REGISTRY/$ECR_FRONTEND:$IMAGE_TAG
+          docker push $REGISTRY/$ECR_FRONTEND:latest
+          echo "image=$REGISTRY/$ECR_FRONTEND:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Build & push backend
+        id: backend-build
+        env:
+          REGISTRY:  ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --target production \
+            -t $REGISTRY/$ECR_BACKEND:$IMAGE_TAG \
+            -t $REGISTRY/$ECR_BACKEND:latest \
+            ./backend
+          docker push $REGISTRY/$ECR_BACKEND:$IMAGE_TAG
+          docker push $REGISTRY/$ECR_BACKEND:latest
+          echo "image=$REGISTRY/$ECR_BACKEND:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────────
+  # JOB 3 — Security scan with Trivy
+  # (Like Defender for Containers in Azure)
+  # ─────────────────────────────────────────────
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.build-and-push.outputs.frontend-image }}
+          format: table
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.build-and-push.outputs.backend-image }}
+          format: table
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+
+  # ─────────────────────────────────────────────
+  # JOB 4 — Zero downtime deploy to ECS Fargate
+  #
+  # How it works (zero downtime rolling deploy):
+  # 1. Download current task definition from ECS
+  # 2. Swap in the new image URI (new git SHA)
+  # 3. Register the updated task definition
+  # 4. ECS starts NEW tasks with new image
+  # 5. ALB health check passes on new tasks
+  # 6. ALB drains traffic from OLD tasks
+  # 7. OLD tasks are stopped
+  # → Users never see downtime
+  #
+  # If health check fails → circuit breaker
+  # automatically rolls back to previous version
+  # ─────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy (Zero Downtime)
+    runs-on: ubuntu-latest
+    needs: [build-and-push, security-scan]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      # ── Frontend deploy ──────────────────────
+      - name: Download current frontend task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $TASK_DEF_FRONTEND \
+            --query taskDefinition \
+            > frontend-task-def.json
+
+      - name: Inject new frontend image into task definition
+        id: frontend-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: frontend-task-def.json
+          container-name:  frontend
+          image:           ${{ needs.build-and-push.outputs.frontend-image }}
+
+      - name: Deploy frontend to ECS (rolling)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition:          ${{ steps.frontend-task-def.outputs.task-definition }}
+          service:                  ${{ env.ECS_SERVICE_FRONTEND }}
+          cluster:                  ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true   # blocks until all new tasks are healthy
+
+      # ── Backend deploy ───────────────────────
+      - name: Download current backend task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $TASK_DEF_BACKEND \
+            --query taskDefinition \
+            > backend-task-def.json
+
+      - name: Inject new backend image into task definition
+        id: backend-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: backend-task-def.json
+          container-name:  backend
+          image:           ${{ needs.build-and-push.outputs.backend-image }}
+
+      - name: Deploy backend to ECS (rolling)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition:          ${{ steps.backend-task-def.outputs.task-definition }}
+          service:                  ${{ env.ECS_SERVICE_BACKEND }}
+          cluster:                  ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      # ── Final health check ───────────────────
+      - name: Health check
+        run: |
+          echo "Checking app health..."
+          for i in 1 2 3; do
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" https://${{ secrets.ALB_DNS }}/health)
+            if [ "$HTTP" = "200" ]; then
+              echo "✅ Health check passed (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i failed (status $HTTP), retrying in 10s..."
+            sleep 10
+          done
+          echo "❌ Health check failed after 3 attempts"
+          exit 1
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "## ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend image:** ${{ needs.build-and-push.outputs.frontend-image }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend image:** ${{ needs.build-and-push.outputs.backend-image }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed at:** $(date -u)" >> $GITHUB_STEP_SUMMARY

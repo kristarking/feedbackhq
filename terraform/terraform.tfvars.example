@@ -1,0 +1,7 @@
+aws_region      = "us-east-1"
+project         = "feedbackhq"
+environment     = "prod"
+vpc_cidr        = "10.0.0.0/16"
+db_name         = "feedbackhq"
+db_username     = "feedbackhq_user"
+certificate_arn = "arn:aws:acm:us-east-1:YOUR_ACCOUNT_ID:certificate/YOUR_CERT_ID"
