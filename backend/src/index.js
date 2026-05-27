@@ -27,7 +27,11 @@ if (process.env.NODE_ENV === 'production') {
 // Security & utilities
 app.use(helmet());
 app.use(compression());
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'https://app.heros.com.ng',
+  credentials: true
+}));
+  
 app.use(express.json({ limit: '10kb' }));
 app.use(morgan('combined', { stream: { write: msg => logger.info(msg.trim()) } }));
 
