@@ -22,7 +22,7 @@ export default function Home() {
       <div style={{ background: 'linear-gradient(135deg,#1e3a8a,#2563eb)', color: '#fff', padding: '4rem 0' }}>
         <div className="container" style={{ textAlign: 'center' }}>
           <h1 style={{ fontSize: 'clamp(2rem,5vw,3rem)', fontWeight: 800, marginBottom: '1rem' }}>
-            Real Reviews, Real Insights
+            Real Reviews, Real Insights Zero Downtime 
           </h1>
           <p style={{ fontSize: '1.1rem', opacity: .8, marginBottom: '2rem', maxWidth: '500px', margin: '0 auto 2rem' }}>
             Browse honest customer feedback on software products. Sign up to share your own experience.
