@@ -68,9 +68,10 @@ resource "aws_ecs_task_definition" "backend" {
       { name = "REDIS_PORT",  value = "6379" }
     ]
     secrets = [
-      { name = "DB_USER",     valueFrom = "${var.secrets_arn}:username::" },
-      { name = "DB_PASSWORD", valueFrom = "${var.secrets_arn}:password::" }
-    ]
+  { name = "DB_USER",     valueFrom = "${var.secrets_arn}:username::" },
+  { name = "DB_PASSWORD", valueFrom = "${var.secrets_arn}:password::" },
+  { name = "JWT_SECRET",  valueFrom = "${var.secrets_arn}:jwt_secret::" }
+]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -89,7 +90,7 @@ resource "aws_ecs_service" "frontend" {
   desired_count   = 2
   launch_type     = "FARGATE"
 
-  # Rolling deployment — keeps 100% capacity running during updates (zero downtime)
+  # Rolling deployment keeps 100% capacity running during updates (zero downtime)
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
@@ -115,7 +116,7 @@ resource "aws_ecs_service" "backend" {
   desired_count   = 2
   launch_type     = "FARGATE"
 
-  # Rolling deployment — keeps 100% capacity running during updates (zero downtime)
+  # Rolling deployment keeps 100% capacity running during updates (zero downtime)
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 

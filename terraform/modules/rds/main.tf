@@ -21,9 +21,15 @@ resource "aws_secretsmanager_secret" "db" {
   name = "/${var.project}/${var.environment}/db-password"
 }
 
+resource "random_password" "jwt" { length = 64; special = false }
+
 resource "aws_secretsmanager_secret_version" "db" {
   secret_id     = aws_secretsmanager_secret.db.id
-  secret_string = jsonencode({ username = var.db_username, password = random_password.db.result })
+  secret_string = jsonencode({
+    username   = var.db_username
+    password   = random_password.db.result
+    jwt_secret = random_password.jwt.result
+  })
 }
 
 resource "aws_db_instance" "main" {

@@ -1,4 +1,4 @@
-name: CI/CD — Zero Downtime Deploy
+name: CI/CD Zero Downtime Deploy
 
 on:
   push:
@@ -19,12 +19,12 @@ env:
 jobs:
 
   # ─────────────────────────────────────────────
-  # JOB 1 — Run tests
+  # JOB 1 Run tests
   # (Like running your test suite before merging
   #  a PR in Azure DevOps)
   # ─────────────────────────────────────────────
   test:
-    name: 🧪 Test
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,11 +49,11 @@ jobs:
         run: cd backend && npm run lint || true
 
   # ─────────────────────────────────────────────
-  # JOB 2 — Build Docker images and push to ECR
+  # JOB 2 Build Docker images and push to ECR
   # (ECR = ACR in Azure)
   # ─────────────────────────────────────────────
   build-and-push:
-    name: 🐳 Build & Push to ECR
+    name: Build & Push to ECR
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main'
@@ -107,11 +107,11 @@ jobs:
           echo "image=$REGISTRY/$ECR_BACKEND:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
   # ─────────────────────────────────────────────
-  # JOB 3 — Security scan with Trivy
+  # JOB 3 Security scan with Trivy
   # (Like Defender for Containers in Azure)
   # ─────────────────────────────────────────────
   security-scan:
-    name: 🔒 Security Scan
+    name: Security Scan
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.ref == 'refs/heads/main'
@@ -143,7 +143,7 @@ jobs:
           severity: HIGH,CRITICAL
 
   # ─────────────────────────────────────────────
-  # JOB 4 — Zero downtime deploy to ECS Fargate
+  # JOB 4 Zero downtime deploy to ECS Fargate
   #
   # How it works (zero downtime rolling deploy):
   # 1. Download current task definition from ECS
@@ -159,7 +159,7 @@ jobs:
   # automatically rolls back to previous version
   # ─────────────────────────────────────────────
   deploy:
-    name: 🚀 Deploy (Zero Downtime)
+    name: Deploy 
     runs-on: ubuntu-latest
     needs: [build-and-push, security-scan]
     if: github.ref == 'refs/heads/main'
@@ -175,7 +175,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      # ── Frontend deploy ──────────────────────
+      # Frontend deploy 
       - name: Download current frontend task definition
         run: |
           aws ecs describe-task-definition \
@@ -199,7 +199,7 @@ jobs:
           cluster:                  ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true   # blocks until all new tasks are healthy
 
-      # ── Backend deploy ───────────────────────
+      # Backend deploy
       - name: Download current backend task definition
         run: |
           aws ecs describe-task-definition \
@@ -223,26 +223,26 @@ jobs:
           cluster:                  ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
 
-      # ── Final health check ───────────────────
+      # Final health check
       - name: Health check
         run: |
           echo "Checking app health..."
           for i in 1 2 3; do
             HTTP=$(curl -s -o /dev/null -w "%{http_code}" https://${{ secrets.ALB_DNS }}/health)
             if [ "$HTTP" = "200" ]; then
-              echo "✅ Health check passed (attempt $i)"
+              echo "Health check passed (attempt $i)"
               exit 0
             fi
             echo "Attempt $i failed (status $HTTP), retrying in 10s..."
             sleep 10
           done
-          echo "❌ Health check failed after 3 attempts"
+          echo "Health check failed after 3 attempts"
           exit 1
 
       - name: Summary
         if: success()
         run: |
-          echo "## ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "Deployment Successful" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Frontend image:** ${{ needs.build-and-push.outputs.frontend-image }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Backend image:** ${{ needs.build-and-push.outputs.backend-image }}" >> $GITHUB_STEP_SUMMARY
