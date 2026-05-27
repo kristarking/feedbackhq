@@ -18,14 +18,35 @@ env:
 
 jobs:
 
-  # ─────────────────────────────────────────────
   # JOB 1 Run tests
-  # (Like running your test suite before merging
-  #  a PR in Azure DevOps)
-  # ─────────────────────────────────────────────
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpassword
+          MYSQL_DATABASE: feedbackhq
+          MYSQL_USER: feedbackhq_user
+          MYSQL_PASSWORD: testpassword
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u feedbackhq_user -ptestpassword"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +64,14 @@ jobs:
         run: cd backend && npm test
         env:
           NODE_ENV: test
-          JWT_SECRET: test-secret
+          JWT_SECRET: test-secret-for-ci
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: feedbackhq
+          DB_USER: feedbackhq_user
+          DB_PASSWORD: testpassword
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
 
       - name: Lint
         run: cd backend && npm run lint || true
