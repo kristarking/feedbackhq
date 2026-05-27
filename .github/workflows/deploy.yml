@@ -256,7 +256,7 @@ jobs:
         run: |
           echo "Checking app health..."
           for i in 1 2 3; do
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" https://app.heros.com.ng/health)
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -L https://app.heros.com.ng/health)
             if [ "$HTTP" = "200" ]; then
               echo "Health check passed (attempt $i)"
               exit 0
